@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tailscale To-Do</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex justify-center p-4 sm:p-6">
+    <div x-data="todoApp()" x-init="init()" class="w-full max-w-md">
+        
+        <div class="flex items-center justify-between mb-6">
+            <h1 class="text-2xl font-bold text-indigo-400">Tasks</h1>
+            <span :class="isOnline ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" 
+                  class="px-2.5 py-1 text-xs font-semibold rounded-full border" 
+                  x-text="isOnline ? 'Synced' : 'Offline'"></span>
+        </div>
+
+        <form @submit.prevent="addTodo()" class="mb-6 bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg space-y-3">
+            <input type="text" x-model="newTitle" placeholder="Add a new task..." required
+                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500">
+            <div class="flex items-center justify-between pt-1">
+                <label class="flex items-center space-x-2 text-sm text-slate-400 cursor-pointer">
+                    <input type="checkbox" x-model="newIsRecurring" class="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0">
+                    <span>Repeat daily (6:00 AM)</span>
+                </label>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">Add</button>
+            </div>
+        </form>
+
+        <div class="space-y-2">
+            <template x-for="todo in todos" :key="todo.id">
+                <div class="flex items-center justify-between p-3.5 bg-slate-800 border border-slate-700/60 rounded-xl">
+                    <div class="flex items-center space-x-3 overflow-hidden pr-2">
+                        <input type="checkbox" :checked="todo.completed" @change="toggleTodo(todo)"
+                               class="h-5 w-5 rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0 cursor-pointer">
+                        <span :class="{ 'line-through text-slate-500': todo.completed, 'text-slate-200': !todo.completed }"
+                              class="text-sm font-medium truncate" x-text="todo.title"></span>
+                        <template x-if="todo.is_recurring">
+                            <span class="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded">6 AM</span>
+                        </template>
+                    </div>
+                    <button @click="deleteTodo(todo.id)" class="text-slate-500 hover:text-rose-400 p-1">
+                        &times;
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script>
+        function todoApp() {
+            return {
+                todos: JSON.parse(localStorage.getItem('cached_todos') || '[]'),
+                newTitle: '',
+                newIsRecurring: false,
+                isOnline: navigator.onLine,
+
+                init() {
+                    window.addEventListener('online', () => { this.isOnline = true; this.sync(); });
+                    window.addEventListener('offline', () => { this.isOnline = false; });
+                    this.sync();
+                    setInterval(() => this.sync(), 10000);
+                },
+
+                saveLocal() {
+                    localStorage.setItem('cached_todos', JSON.stringify(this.todos));
+                },
+
+                async sync() {
+                    if (!navigator.onLine) return;
+                    try {
+                        const res = await fetch('/api/sync', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.todos)
+                        });
+                        if (res.ok) {
+                            this.todos = await res.json();
+                            this.saveLocal();
+                            this.isOnline = true;
+                        }
+                    } catch (e) {
+                        this.isOnline = false;
+                    }
+                },
+
+                async addTodo() {
+                    if (!this.newTitle.trim()) return;
+                    const item = {
+                        id: crypto.randomUUID(),
+                        title: this.newTitle.trim(),
+                        completed: false,
+                        is_recurring: this.newIsRecurring,
+                        updated_at: new Date().toISOString()
+                    };
+                    this.todos.unshift(item);
+                    this.saveLocal();
+                    this.newTitle = '';
+                    this.newIsRecurring = false;
+                    await this.sync();
+                },
+
+                async toggleTodo(todo) {
+                    todo.completed = !todo.completed;
+                    todo.updated_at = new Date().toISOString();
+                    this.saveLocal();
+                    await this.sync();
+                },
+
+                async deleteTodo(id) {
+                    this.todos = this.todos.filter(t => t.id !== id);
+                    this.saveLocal();
+                    if (this.isOnline) {
+                        fetch(`/api/todos/${id}`, { method: 'DELETE' });
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
